@@ -1,0 +1,383 @@
+#!/usr/bin/env bash
+#
+# cleaner — strip developer-machine metadata from an Xcode project before
+# transferring it to an isolated build machine (one Apple account per machine).
+#
+# Subcommands:
+#   clean     Strip metadata on the SOURCE machine (run before archiving)
+#   prepare   Re-resolve dependencies / clear quarantine on the BUILD machine
+#   check     Verify that a directory is clean (no personal paths / xattrs)
+#   pack      Create a password-protected zip archive of the project
+#   purge     Delete the project + its DerivedData after a successful upload
+#
+# Global flags:
+#   --dry-run   Print actions without executing them
+#   --yes, -y   Skip interactive confirmations (for destructive ops)
+#   --force     Run even if the directory does not look like an Xcode project
+#   --help, -h  Show help
+#
+# Config: an optional .cleaner.yml in the project root overrides defaults.
+
+set -euo pipefail
+
+CLEANER_VERSION="0.1.0"
+
+# ---- defaults (overridable via .cleaner.yml or flags) -----------------------
+PROJECT_NAME=""        # used to target ~/Library/Developer/Xcode/DerivedData/<name>-*
+STRIP_PODS="true"      # remove Pods/ so the build machine runs a fresh pod install
+STRIP_GIT="false"      # remove .git/ (only after a clean git status; needs --git)
+STRIP_RESOLVED="false" # remove Package.resolved (default off: it has no machine
+                       # data and keeping it guarantees reproducible builds)
+PACK_NAME=""           # archive base name (defaults to the project folder name)
+
+DRY_RUN="false"
+ASSUME_YES="false"
+FORCE="false"
+EXPORT_DEST=""         # destination folder for `export` (default: ../<folder>-clean)
+
+# ---- output helpers ---------------------------------------------------------
+_c_reset=$'\033[0m'; _c_bold=$'\033[1m'; _c_red=$'\033[31m'
+_c_green=$'\033[32m'; _c_yellow=$'\033[33m'; _c_blue=$'\033[34m'
+
+info()  { printf '%s%s%s\n' "$_c_blue"  "$*" "$_c_reset"; }
+ok()    { printf '%s%s%s\n' "$_c_green" "$*" "$_c_reset"; }
+warn()  { printf '%s%s%s\n' "$_c_yellow" "$*" "$_c_reset" >&2; }
+err()   { printf '%s%s%s\n' "$_c_red"   "$*" "$_c_reset" >&2; }
+die()   { err "error: $*"; exit 1; }
+
+# Run a command, or just print it in dry-run mode.
+run() {
+  if [[ "$DRY_RUN" == "true" ]]; then
+    printf '  %s[dry-run]%s %s\n' "$_c_yellow" "$_c_reset" "$*"
+  else
+    eval "$@"
+  fi
+}
+
+confirm() {
+  # $1 = prompt. Returns 0 on yes.
+  [[ "$ASSUME_YES" == "true" ]] && return 0
+  local reply
+  printf '%s%s%s [y/N] ' "$_c_yellow" "$1" "$_c_reset"
+  read -r reply || true
+  [[ "$reply" == "y" || "$reply" == "Y" ]]
+}
+
+# ---- project detection ------------------------------------------------------
+is_project_dir() {
+  # Heuristic: anything that clearly identifies an Xcode project root.
+  compgen -G "*.xcodeproj"   > /dev/null 2>&1 && return 0
+  compgen -G "*.xcworkspace" > /dev/null 2>&1 && return 0
+  [[ -f Podfile || -f Package.swift ]] && return 0
+  return 1
+}
+
+# Derive PROJECT_NAME from the .xcodeproj/.xcworkspace in the current dir when
+# it was not provided via config. Lets the global DerivedData cleanup work on
+# any project with zero configuration.
+detect_project_name() {
+  [[ -n "$PROJECT_NAME" ]] && return 0
+  local f
+  for f in *.xcworkspace *.xcodeproj; do
+    [[ -e "$f" ]] || continue
+    PROJECT_NAME="${f%.*}"
+    info "auto-detected project name: $PROJECT_NAME"
+    return 0
+  done
+}
+
+guard_project_dir() {
+  if ! is_project_dir; then
+    if [[ "$FORCE" == "true" ]]; then
+      warn "no Xcode project markers found here, continuing because --force was given"
+    else
+      die "this does not look like an Xcode project root (no *.xcodeproj/*.xcworkspace/Podfile/Package.swift).
+Refusing to run destructive commands. Use --force to override, or cd into the project."
+    fi
+  fi
+}
+
+# ---- config (.cleaner.yml) --------------------------------------------------
+# Minimal key: value reader. Not a real YAML parser — supports flat
+# "key: value" lines and ignores comments / blank lines.
+load_config() {
+  local file=".cleaner.yml"
+  [[ -f "$file" ]] || return 0
+  info "loading config from $file"
+  local key value
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    line="${line%%#*}"                       # strip comments
+    [[ "$line" =~ ^[[:space:]]*$ ]] && continue
+    key="${line%%:*}"; value="${line#*:}"
+    key="$(printf '%s' "$key" | tr -d '[:space:]')"
+    value="$(printf '%s' "$value" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' -e 's/^"\(.*\)"$/\1/' -e "s/^'\(.*\)'\$/\1/")"
+    case "$key" in
+      project_name) PROJECT_NAME="$value" ;;
+      strip_pods)   STRIP_PODS="$value" ;;
+      strip_git)    STRIP_GIT="$value" ;;
+      strip_package_resolved) STRIP_RESOLVED="$value" ;;
+      pack_name)    PACK_NAME="$value" ;;
+      *) warn "unknown config key: $key" ;;
+    esac
+  done < "$file"
+}
+
+# ---- shared cleaning primitives ---------------------------------------------
+clean_build_artifacts() {
+  info "removing build artifacts"
+  run "rm -rf build/ DerivedData/"
+  if [[ -n "$PROJECT_NAME" ]]; then
+    run "rm -rf \"\$HOME/Library/Developer/Xcode/DerivedData/${PROJECT_NAME}-\"*"
+  else
+    warn "project_name not set — skipping global DerivedData cleanup for this project"
+  fi
+}
+
+clean_xcode_userdata() {
+  info "removing Xcode user data"
+  run "find . -name 'xcuserdata'   -type d -exec rm -rf {} + 2>/dev/null || true"
+  run "find . -name '*.xcuserdatad' -type d -exec rm -rf {} + 2>/dev/null || true"
+  run "find . -name '*.xcuserstate' -delete 2>/dev/null || true"
+}
+
+clean_logs_and_junk() {
+  info "removing logs and macOS junk"
+  # Narrow patterns only — never blanket *.log / *.txt (would delete real files).
+  run "rm -f build*.log build*.txt screenshot.png"
+  run "find . -name '.DS_Store' -delete 2>/dev/null || true"
+  run "find . -name '._*' -delete 2>/dev/null || true"
+}
+
+clean_spm_cache() {
+  info "removing SwiftPM workspace cache (.swiftpm/)"
+  run "rm -rf .swiftpm/"
+  if [[ "$STRIP_RESOLVED" == "true" ]]; then
+    warn "removing Package.resolved (build machine will re-resolve to possibly newer versions)"
+    run "find . -name 'Package.resolved' -delete 2>/dev/null || true"
+  else
+    # Kept by default: it contains only package URLs and pinned commit hashes
+    # (no machine data) and guarantees reproducible builds.
+    info "keeping Package.resolved (reproducible builds); use --strip-resolved to remove"
+  fi
+}
+
+clean_pods() {
+  [[ "$STRIP_PODS" != "true" ]] && return 0
+  if [[ -d Pods ]]; then
+    info "removing Pods/ — the build machine will run a fresh pod install (keeping Podfile.lock)"
+    run "rm -rf Pods/"
+  fi
+}
+
+clean_xattrs() {
+  info "stripping extended attributes (xattr -cr .)"
+  run "xattr -cr ."
+}
+
+clean_git() {
+  [[ "$STRIP_GIT" != "true" ]] && return 0
+  if [[ ! -d .git ]]; then return 0; fi
+  warn "git removal requested"
+  if [[ -n "$(git status --porcelain 2>/dev/null || echo dirty)" ]]; then
+    die "working tree is not clean (or not a git repo) — refusing to delete .git/. Commit & push first."
+  fi
+  if ! git remote 2>/dev/null | grep -q .; then
+    die "no git remote configured — refusing to delete .git/ (history would be lost forever)."
+  fi
+  if confirm ".git/ history will be permanently deleted. Continue?"; then
+    run "rm -rf .git/"
+  else
+    info "skipped .git/ removal"
+  fi
+}
+
+# ---- subcommands ------------------------------------------------------------
+cmd_clean() {
+  guard_project_dir
+  detect_project_name
+  info "== cleaner clean =="
+  clean_build_artifacts
+  clean_xcode_userdata
+  clean_logs_and_junk
+  clean_spm_cache
+  clean_pods
+  clean_git
+  clean_xattrs   # last, so it also strips xattrs added by the steps above
+  ok "clean complete. Run 'cleaner check' to verify, then archive."
+}
+
+cmd_export() {
+  guard_project_dir
+  detect_project_name
+  local folder dest
+  folder="$(basename "$PWD")"
+  dest="${EXPORT_DEST:-../${folder}-clean}"
+
+  # Resolve to an absolute path and make sure it is not inside the source.
+  case "$dest" in
+    /*) : ;;
+    *)  dest="$(cd "$(dirname "$dest")" 2>/dev/null && pwd)/$(basename "$dest")" || die "invalid destination: $dest" ;;
+  esac
+  case "$dest/" in
+    "$PWD"/*) die "destination must be OUTSIDE the project folder (got: $dest)" ;;
+  esac
+
+  info "== cleaner export =="
+  info "copying clean project to: $dest"
+  [[ -e "$dest" ]] && warn "destination already exists and will be updated: $dest"
+
+  local rsync_excludes=(
+    --exclude 'build/' --exclude 'DerivedData/'
+    --exclude 'xcuserdata/' --exclude '*.xcuserdatad/' --exclude '*.xcuserstate'
+    --exclude '.swiftpm/' --exclude '.DS_Store' --exclude '._*'
+    --exclude 'build*.log' --exclude 'build*.txt' --exclude 'screenshot.png'
+  )
+  [[ "$STRIP_PODS" == "true" ]]     && rsync_excludes+=( --exclude 'Pods/' )
+  [[ "$STRIP_GIT"  == "true" ]]     && rsync_excludes+=( --exclude '.git/' )
+  [[ "$STRIP_RESOLVED" == "true" ]] && rsync_excludes+=( --exclude 'Package.resolved' )
+
+  local dry=""; [[ "$DRY_RUN" == "true" ]] && dry="-n"
+  run "rsync -a $dry ${rsync_excludes[*]} ./ \"$dest/\""
+  run "xattr -cr \"$dest\""
+  ok "exported clean copy to $dest (original untouched). Archive/transfer that folder."
+}
+
+cmd_prepare() {
+  guard_project_dir
+  info "== cleaner prepare (build machine) =="
+  clean_xattrs   # strip quarantine / where-froms added by the download
+  if [[ -f Podfile && ! -d Pods ]]; then
+    if command -v pod >/dev/null 2>&1; then
+      info "running pod install"
+      run "pod install"
+    else
+      warn "Podfile found but CocoaPods is not installed — run 'sudo gem install cocoapods' or 'brew install cocoapods'"
+    fi
+  fi
+  if [[ -f Package.swift ]]; then
+    if command -v swift >/dev/null 2>&1; then
+      info "resolving SwiftPM dependencies"
+      run "swift package resolve || true"
+    fi
+  fi
+  ok "prepare complete. Open the project in Xcode, Clean Build Folder, then Archive."
+}
+
+cmd_check() {
+  info "=== Extended attributes ==="
+  xattr -lr . 2>/dev/null | head -10 || true
+  info "=== Personal paths ==="
+  grep -rIn "/Users/admin\|/Users/$(whoami)" . 2>/dev/null | grep -v ".git/" | head -5 || true
+  info "=== Xcode garbage ==="
+  find . \( -name 'xcuserdata' -o -name '*.xcuserstate' -o -name 'DerivedData' -o -name 'build' -o -name '.DS_Store' -o -name '._*' \) 2>/dev/null || true
+  info "=== Total size ==="
+  du -sh . 2>/dev/null || true
+  printf '\n'
+  ok "Expected: no personal paths, no Xcode garbage, xattrs empty (or only com.apple.macl)."
+}
+
+cmd_pack() {
+  guard_project_dir
+  local folder name
+  folder="$(basename "$PWD")"
+  name="${PACK_NAME:-$folder}"
+  info "packing ../$name.zip from $folder/ (encrypted, you will be prompted for a password)"
+  ( cd .. && run "zip -er \"${name}.zip\" \"${folder}/\"" )
+  info "archive created at $(cd .. && pwd)/${name}.zip"
+  warn "Store the password in a password manager. Send link and password via SEPARATE channels."
+}
+
+cmd_purge() {
+  guard_project_dir
+  detect_project_name
+  local folder; folder="$(basename "$PWD")"
+  warn "This will DELETE the project folder '$folder' and its DerivedData."
+  if ! confirm "Proceed with purge?"; then info "purge cancelled"; return 0; fi
+  if [[ -n "$PROJECT_NAME" ]]; then
+    run "rm -rf \"\$HOME/Library/Developer/Xcode/DerivedData/${PROJECT_NAME}-\"*"
+  fi
+  local parent target
+  parent="$(cd .. && pwd)"; target="$PWD"
+  cd ..
+  run "rm -rf \"$target\""
+  ok "purged. Remember to empty the Trash."
+}
+
+usage() {
+  cat <<EOF
+${_c_bold}cleaner${_c_reset} v${CLEANER_VERSION} — strip dev-machine metadata from an Xcode project
+
+${_c_bold}USAGE${_c_reset}
+  cleaner <command> [flags]
+
+${_c_bold}COMMANDS${_c_reset}
+  clean      Strip metadata in place on the SOURCE machine (before archiving)
+  export     Copy a CLEAN project to a new folder; original is untouched (safest)
+  prepare    Clear quarantine + re-resolve deps on the BUILD machine
+  check      Verify a directory is clean
+  pack       Create a password-protected zip (../<name>.zip)
+  purge      Delete the project + DerivedData after upload
+  help       Show this help
+  version    Print version
+
+${_c_bold}FLAGS${_c_reset}
+  --dry-run   Show what would happen without doing it
+  -y, --yes   Skip confirmations (destructive ops)
+  --force     Run even without Xcode project markers
+  --git           (clean) also remove .git/ after a clean status check
+  --keep-pods     (clean) do NOT remove Pods/
+  --strip-resolved (clean) also delete Package.resolved (default: kept)
+  -h, --help      Show help
+
+${_c_bold}CONFIG${_c_reset}
+  .cleaner.yml in the project root:
+    project_name: AuroraVPN
+    strip_pods: true
+    strip_git: false
+    pack_name: AuroraVPN
+EOF
+}
+
+# ---- arg parsing ------------------------------------------------------------
+main() {
+  [[ $# -eq 0 ]] && { usage; exit 0; }
+  local cmd="$1"; shift || true
+
+  # parse global/command flags
+  local args=()
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --dry-run) DRY_RUN="true" ;;
+      -y|--yes)  ASSUME_YES="true" ;;
+      --force)   FORCE="true" ;;
+      --git)     STRIP_GIT="true" ;;
+      --keep-pods) STRIP_PODS="false" ;;
+      --strip-resolved) STRIP_RESOLVED="true" ;;
+      -h|--help) usage; exit 0 ;;
+      *) args+=("$1") ;;
+    esac
+    shift
+  done
+  set -- "${args[@]:-}"
+
+  # First positional arg to `export` is the destination folder.
+  [[ "$cmd" == "export" && -n "${1:-}" ]] && EXPORT_DEST="$1"
+
+  case "$cmd" in
+    clean|prepare|check|pack|purge|export) load_config ;;
+  esac
+
+  case "$cmd" in
+    clean)   cmd_clean ;;
+    export)  cmd_export ;;
+    prepare) cmd_prepare ;;
+    check)   cmd_check ;;
+    pack)    cmd_pack ;;
+    purge)   cmd_purge ;;
+    help|-h|--help) usage ;;
+    version|--version|-v) echo "cleaner v${CLEANER_VERSION}" ;;
+    *) die "unknown command: $cmd (run 'cleaner help')" ;;
+  esac
+}
+
+main "$@"

@@ -1,0 +1,23 @@
+# Copy this file to the root of your Xcode project as ".cleaner.yml".
+# All keys are optional; values shown are the defaults.
+
+# Used to target ~/Library/Developer/Xcode/DerivedData/<project_name>-*
+# Set this to your scheme/project name (e.g. AuroraVPN).
+project_name: ""
+
+# Remove Pods/ on `clean` so the build machine runs a fresh `pod install`.
+# Podfile and Podfile.lock are always kept.
+strip_pods: true
+
+# Remove .git/ on `clean` (only with the --git flag, and only after a clean
+# `git status` with a configured remote). History is lost forever — be sure.
+strip_git: false
+
+# Delete Package.resolved on `clean`. Default false (kept) because it has no
+# machine data and keeping it guarantees reproducible builds. Set true only if
+# you specifically want the build machine to re-resolve to newer versions.
+strip_package_resolved: false
+
+# Base name for the archive created by `cleaner pack`.
+# Defaults to the project folder name when empty.
+pack_name: ""
