@@ -22,14 +22,14 @@ standardizes that cleanup so it is repeatable and safe.
 ## Install
 
 ```bash
-brew tap your-org/cleaner
+brew tap victorshablyko/cleaner
 brew install cleaner
 ```
 
 Or run it locally without Homebrew:
 
 ```bash
-git clone https://github.com/your-org/cleaner.git
+git clone https://github.com/victorshablyko/cleaner.git
 sudo ln -sf "$PWD/cleaner/bin/cleaner" /usr/local/bin/cleaner
 ```
 
