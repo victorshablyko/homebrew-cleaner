@@ -40,10 +40,8 @@ On the **source** machine (where you write code):
 ```bash
 # Safest: copy a clean project to a new folder, original is never touched
 cd /path/to/ProjectFolder
-cleaner export                 # creates ../ProjectFolder-clean (clean copy)
-cd ../ProjectFolder-clean
-cleaner check
-cleaner pack                   # optional: ../ProjectFolder-clean.zip (encrypted)
+cleaner export --zip           # ../ProjectFolder-clean + ../ProjectFolder-clean.zip
+# (without --zip it only creates the clean folder; use `cleaner pack` to zip later)
 
 # Or clean the original in place (relies on git to recover tracked files)
 cd /path/to/ProjectFolder
@@ -72,7 +70,7 @@ cleaner purge        # delete the project folder + its DerivedData
 | Command   | Where    | What it does |
 |-----------|----------|--------------|
 | `clean`   | source   | Removes build/, DerivedData/, xcuserdata, `*.xcuserstate`, `.swiftpm/`, logs, `.DS_Store`, `._*`, `Pods/` (configurable), strips xattrs. **Keeps `Package.resolved` and `Podfile.lock`.** Edits the original in place. |
-| `export`  | source   | Copies a CLEAN project to a new folder (default `../<name>-clean`) via `rsync` with excludes, then strips xattrs. **The original is never modified** — safest option. |
+| `export`  | source   | Copies a CLEAN project to a new folder (default `../<name>-clean`) via `rsync` with excludes, then strips xattrs. **The original is never modified** — safest option. Add `--zip` to also produce an encrypted archive. |
 | `prepare` | build    | `xattr -cr .`, then `pod install` / `swift package resolve` if needed. |
 | `check`   | both     | Prints xattrs, personal paths, Xcode garbage, total size. |
 | `pack`    | source   | Creates an encrypted `../<name>.zip`. |

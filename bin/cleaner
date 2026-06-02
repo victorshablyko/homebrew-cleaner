@@ -20,7 +20,7 @@
 
 set -euo pipefail
 
-CLEANER_VERSION="0.1.0"
+CLEANER_VERSION="0.1.1"
 
 # ---- defaults (overridable via .cleaner.yml or flags) -----------------------
 PROJECT_NAME=""        # used to target ~/Library/Developer/Xcode/DerivedData/<name>-*
@@ -34,6 +34,7 @@ DRY_RUN="false"
 ASSUME_YES="false"
 FORCE="false"
 EXPORT_DEST=""         # destination folder for `export` (default: ../<folder>-clean)
+AUTO_ZIP="false"       # `export --zip`: also create an encrypted archive
 
 # ---- output helpers ---------------------------------------------------------
 _c_reset=$'\033[0m'; _c_bold=$'\033[1m'; _c_red=$'\033[31m'
@@ -116,6 +117,7 @@ load_config() {
       strip_pods)   STRIP_PODS="$value" ;;
       strip_git)    STRIP_GIT="$value" ;;
       strip_package_resolved) STRIP_RESOLVED="$value" ;;
+      auto_zip)     AUTO_ZIP="$value" ;;
       pack_name)    PACK_NAME="$value" ;;
       *) warn "unknown config key: $key" ;;
     esac
@@ -239,7 +241,12 @@ cmd_export() {
   local dry=""; [[ "$DRY_RUN" == "true" ]] && dry="-n"
   run "rsync -a $dry ${rsync_excludes[*]} ./ \"$dest/\""
   run "xattr -cr \"$dest\""
-  ok "exported clean copy to $dest (original untouched). Archive/transfer that folder."
+  ok "exported clean copy to $dest (original untouched)."
+  if [[ "$AUTO_ZIP" == "true" ]]; then
+    archive_folder "$dest"
+  else
+    info "tip: add --zip to also create an encrypted archive."
+  fi
 }
 
 cmd_prepare() {
@@ -276,15 +283,22 @@ cmd_check() {
   ok "Expected: no personal paths, no Xcode garbage, xattrs empty (or only com.apple.macl)."
 }
 
+# Create an encrypted zip of a folder, placed next to it. Shared by `pack`
+# and `export --zip`.
+archive_folder() {
+  local folder_path="$1" parent base name
+  parent="$(cd "$(dirname "$folder_path")" && pwd)"
+  base="$(basename "$folder_path")"
+  name="${PACK_NAME:-$base}"
+  info "packing $parent/$name.zip from $base/ (encrypted, you will be prompted for a password)"
+  ( cd "$parent" && run "zip -er \"${name}.zip\" \"${base}/\"" )
+  info "archive created at $parent/${name}.zip"
+  warn "Store the password in a password manager. Send link and password via SEPARATE channels."
+}
+
 cmd_pack() {
   guard_project_dir
-  local folder name
-  folder="$(basename "$PWD")"
-  name="${PACK_NAME:-$folder}"
-  info "packing ../$name.zip from $folder/ (encrypted, you will be prompted for a password)"
-  ( cd .. && run "zip -er \"${name}.zip\" \"${folder}/\"" )
-  info "archive created at $(cd .. && pwd)/${name}.zip"
-  warn "Store the password in a password manager. Send link and password via SEPARATE channels."
+  archive_folder "$PWD"
 }
 
 cmd_purge() {
@@ -312,7 +326,7 @@ ${_c_bold}USAGE${_c_reset}
 
 ${_c_bold}COMMANDS${_c_reset}
   clean      Strip metadata in place on the SOURCE machine (before archiving)
-  export     Copy a CLEAN project to a new folder; original is untouched (safest)
+  export     Copy a CLEAN project to a new folder (--zip to also archive)
   prepare    Clear quarantine + re-resolve deps on the BUILD machine
   check      Verify a directory is clean
   pack       Create a password-protected zip (../<name>.zip)
@@ -327,6 +341,7 @@ ${_c_bold}FLAGS${_c_reset}
   --git           (clean) also remove .git/ after a clean status check
   --keep-pods     (clean) do NOT remove Pods/
   --strip-resolved (clean) also delete Package.resolved (default: kept)
+  --zip           (export) also create an encrypted zip of the clean copy
   -h, --help      Show help
 
 ${_c_bold}CONFIG${_c_reset}
@@ -353,6 +368,7 @@ main() {
       --git)     STRIP_GIT="true" ;;
       --keep-pods) STRIP_PODS="false" ;;
       --strip-resolved) STRIP_RESOLVED="true" ;;
+      --zip)     AUTO_ZIP="true" ;;
       -h|--help) usage; exit 0 ;;
       *) args+=("$1") ;;
     esac

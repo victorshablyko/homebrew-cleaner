@@ -18,6 +18,9 @@ strip_git: false
 # you specifically want the build machine to re-resolve to newer versions.
 strip_package_resolved: false
 
-# Base name for the archive created by `cleaner pack`.
-# Defaults to the project folder name when empty.
+# Base name for the archive created by `cleaner pack` / `export --zip`.
+# Defaults to the (clean) folder name when empty.
 pack_name: ""
+
+# Make `cleaner export` always create an encrypted zip (same as --zip).
+auto_zip: false

@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<style>
+  @page { size: A4; margin: 14mm 16mm; }
+  * { box-sizing: border-box; }
+  body {
+    font-family: -apple-system, "Helvetica Neue", Arial, sans-serif;
+    color: #1a1a1a; font-size: 10.5px; line-height: 1.45; margin: 0;
+  }
+  h1 { font-size: 17px; margin: 0 0 2px; }
+  .sub { color: #666; font-size: 10px; margin: 0 0 10px; }
+  h2 {
+    font-size: 11.5px; margin: 11px 0 4px; padding-bottom: 2px;
+    border-bottom: 1px solid #e2e2e2; text-transform: uppercase;
+    letter-spacing: .4px; color: #0b5cad;
+  }
+  code, pre { font-family: "SF Mono", Menlo, Consolas, monospace; }
+  pre {
+    background: #f5f6f8; border: 1px solid #e6e8eb; border-radius: 5px;
+    padding: 6px 9px; margin: 4px 0; font-size: 9.8px; white-space: pre-wrap;
+  }
+  .muted { color: #666; }
+  ul { margin: 3px 0 3px 16px; padding: 0; }
+  li { margin: 1px 0; }
+  .cols { display: flex; gap: 18px; }
+  .col { flex: 1; }
+  .tag { color:#0b5cad; font-weight:600; }
+  .note { background:#fff8e6; border:1px solid #f0e0a8; border-radius:5px; padding:5px 8px; margin-top:6px; font-size:9.6px; }
+</style>
+</head>
+<body>
+  <h1>cleaner — установка и использование</h1>
+  <p class="sub">Очистка iOS-проекта от метаданных машины разработчика перед передачей на сборочную машину.</p>
+
+  <div class="cols">
+    <div class="col">
+      <h2>1. Установка (один раз)</h2>
+<pre>brew tap victorshablyko/cleaner
+brew install cleaner
+cleaner version   # → cleaner v0.1.0</pre>
+      <p class="muted">Обновление: <code>brew update &amp;&amp; brew upgrade cleaner</code></p>
+
+      <h2>2. На исходной машине</h2>
+<pre>cd /путь/к/Проекту
+cleaner export    # ../Проект-clean (копия,
+                  # оригинал не трогается)
+cd ../Проект-clean
+cleaner check     # проверка чистоты
+cleaner pack      # ../Проект-clean.zip
+                  # с паролем</pre>
+      <p class="muted">Передай <span class="tag">.zip</span> на ВПС. Ссылку и пароль — разными каналами.</p>
+    </div>
+
+    <div class="col">
+      <h2>3. На ВПС (сборочная)</h2>
+<pre>cd Проект-clean
+cleaner prepare   # xattr -cr + pod install</pre>
+      <ul>
+        <li>Открыть в Xcode → <b>Clean Build Folder</b> (⇧⌘K)</li>
+        <li>Проверить Signing &amp; Capabilities</li>
+        <li><b>Product → Archive</b></li>
+        <li>Залить через <b>Transporter</b></li>
+      </ul>
+
+      <h2>4. После заливки</h2>
+<pre>cleaner purge     # удалить проект +
+                  # DerivedData</pre>
+
+      <h2>Полезные флаги</h2>
+      <ul>
+        <li><code>--dry-run</code> — показать без выполнения</li>
+        <li><code>--keep-pods</code> — не вырезать Pods/</li>
+        <li><code>--strip-resolved</code> — удалить Package.resolved</li>
+        <li><code>--git</code> — удалить .git/ (после проверок)</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="note">
+    <b>Безопасно:</b> <code>export</code> только копирует — оригинал не изменяется.
+    <code>clean</code> чистит папку на месте (восстанавливаются только файлы под git).
+    Команда работает в любом Xcode-проекте: запускай из его корня.
+  </div>
+</body>
+</html>
