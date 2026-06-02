@@ -84,17 +84,6 @@ cleaner purge        # delete the project folder + its DerivedData
 - `--git` — (with `clean`) also remove `.git/` after a clean `git status`
 - `--keep-pods` — (with `clean`) keep `Pods/`
 
-## Config
-
-Drop a `.cleaner.yml` in the project root (see `.cleaner.yml.example`):
-
-```yaml
-project_name: AuroraVPN
-strip_pods: true
-strip_git: false
-pack_name: AuroraVPN
-```
-
 ## Safety
 
 - Refuses to run destructive commands unless the directory looks like an Xcode
