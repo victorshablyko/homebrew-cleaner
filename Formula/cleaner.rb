@@ -5,7 +5,7 @@
 # victorshablyko below with your GitHub username and paste the tarball sha256.
 #
 # Compute the sha256 after pushing tag v0.1.0:
-#   curl -sL https://github.com/victorshablyko/homebrew-cleaner/archive/refs/tags/v0.1.2.tar.gz | shasum -a 256
+#   curl -sL https://github.com/victorshablyko/homebrew-cleaner/archive/refs/tags/v0.1.3.tar.gz | shasum -a 256
 #
 # Then users install with:
 #   brew tap victorshablyko/cleaner
@@ -13,9 +13,9 @@
 class Cleaner < Formula
   desc "Strip developer-machine metadata from an Xcode project before transfer"
   homepage "https://github.com/victorshablyko/homebrew-cleaner"
-  url "https://github.com/victorshablyko/homebrew-cleaner/archive/refs/tags/v0.1.2.tar.gz"
-  sha256 "20fde71a50c590f2940e37170baf04775fe1f8036d6df2da8f2cebb7edcd9493"
-  version "0.1.2"
+  url "https://github.com/victorshablyko/homebrew-cleaner/archive/refs/tags/v0.1.3.tar.gz"
+  sha256 "1b56415990a59fe0928f8f4cfade2cb26757b3063756b4f5eed77f62243c2f61"
+  version "0.1.3"
   license "MIT"
 
   def install
