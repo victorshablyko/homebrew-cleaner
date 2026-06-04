@@ -38,10 +38,11 @@ sudo ln -sf "$PWD/cleaner/bin/cleaner" /usr/local/bin/cleaner
 On the **source** machine (where you write code):
 
 ```bash
-# Safest: copy a clean project to a new folder, original is never touched
+# Safest: copy a clean project to a new folder, original is never touched.
+# By default export excludes .git/ and creates the encrypted archive.
 cd /path/to/ProjectFolder
-cleaner export --zip           # ../ProjectFolder-clean + ../ProjectFolder-clean.zip
-# (without --zip it only creates the clean folder; use `cleaner pack` to zip later)
+cleaner export                 # ../ProjectFolder-clean (no .git) + ../ProjectFolder-clean.zip
+# Opt out when needed: --keep-git (include history), --no-zip (skip archive)
 
 # Or clean the original in place (relies on git to recover tracked files)
 cd /path/to/ProjectFolder
@@ -70,7 +71,7 @@ cleaner purge        # delete the project folder + its DerivedData
 | Command   | Where    | What it does |
 |-----------|----------|--------------|
 | `clean`   | source   | Removes build/, DerivedData/, xcuserdata, `*.xcuserstate`, `.swiftpm/`, logs, `.DS_Store`, `._*`, `Pods/` (configurable), strips xattrs. **Keeps `Package.resolved` and `Podfile.lock`.** Edits the original in place. |
-| `export`  | source   | Copies a CLEAN project to a new folder (default `../<name>-clean`) via `rsync` with excludes, then strips xattrs. **The original is never modified** — safest option. Add `--zip` to also produce an encrypted archive. |
+| `export`  | source   | Copies a CLEAN project to a new folder (default `../<name>-clean`) via `rsync` with excludes, strips xattrs, **excludes `.git/`**, and **creates an encrypted archive**. **The original is never modified** — safest option. Opt out with `--keep-git` / `--no-zip`. |
 | `prepare` | build    | `xattr -cr .`, then `pod install` / `swift package resolve` if needed. |
 | `check`   | both     | Prints xattrs, personal paths, Xcode garbage, total size. |
 | `pack`    | source   | Creates an encrypted `../<name>.zip`. |
@@ -83,6 +84,8 @@ cleaner purge        # delete the project folder + its DerivedData
 - `--force` — run even if the folder has no Xcode project markers
 - `--git` — (with `clean`) also remove `.git/` after a clean `git status`
 - `--keep-pods` — (with `clean`) keep `Pods/`
+- `--keep-git` — (with `export`) keep `.git/` in the copy (default: excluded)
+- `--no-zip` — (with `export`) do not create the archive (default: zipped)
 
 ## Safety
 

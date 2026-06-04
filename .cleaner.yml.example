@@ -22,5 +22,10 @@ strip_package_resolved: false
 # Defaults to the (clean) folder name when empty.
 pack_name: ""
 
-# Make `cleaner export` always create an encrypted zip (same as --zip).
-auto_zip: false
+# `cleaner export` creates an encrypted zip by default. Set false to skip it
+# (equivalent to passing --no-zip).
+auto_zip: true
+
+# `cleaner export` excludes .git/ from the copy by default (the original keeps
+# its history). Set true to include .git/ in the copy (equivalent to --keep-git).
+export_keep_git: false
