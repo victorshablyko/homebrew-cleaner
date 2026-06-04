@@ -20,7 +20,7 @@
 
 set -euo pipefail
 
-CLEANER_VERSION="0.1.1"
+CLEANER_VERSION="0.1.2"
 
 # ---- defaults (overridable via .cleaner.yml or flags) -----------------------
 PROJECT_NAME=""        # used to target ~/Library/Developer/Xcode/DerivedData/<name>-*
@@ -171,10 +171,16 @@ clean_pods() {
   fi
 }
 
-clean_xattrs() {
-  info "stripping extended attributes (xattr -cr .)"
-  run "xattr -cr ."
+# Strip extended attributes from a path, but skip .git internals (its loose
+# objects are read-only, carry no meaningful metadata, and would otherwise
+# produce noisy "Permission denied" errors) and tolerate any remaining errors.
+strip_xattrs() {
+  local target="${1:-.}"
+  info "stripping extended attributes from $target (skipping .git, ignoring read-only files)"
+  run "find \"$target\" -name .git -type d -prune -o -print0 2>/dev/null | xargs -0 xattr -c 2>/dev/null || true"
 }
+
+clean_xattrs() { strip_xattrs "."; }
 
 clean_git() {
   [[ "$STRIP_GIT" != "true" ]] && return 0
@@ -240,7 +246,7 @@ cmd_export() {
 
   local dry=""; [[ "$DRY_RUN" == "true" ]] && dry="-n"
   run "rsync -a $dry ${rsync_excludes[*]} ./ \"$dest/\""
-  run "xattr -cr \"$dest\""
+  strip_xattrs "$dest"
   ok "exported clean copy to $dest (original untouched)."
   if [[ "$AUTO_ZIP" == "true" ]]; then
     archive_folder "$dest"
